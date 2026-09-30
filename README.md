@@ -2,6 +2,12 @@
 
 一个移动优先的吉他练习网页，当前先验证网页端能力，暂未接入 Android APK。
 
+## 在线体验
+
+网页版已通过 GitHub Pages 部署：<https://yiann32.github.io/guitar-practice-tool/>
+
+推送到 `main` 分支后，`.github/workflows/deploy-pages.yml` 会自动构建并发布。
+
 ## 已实现
 
 - 曲谱练习
