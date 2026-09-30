@@ -11,6 +11,8 @@ interface AudioToMidiPanelProps {
   onOpen?: (songId: string) => void
 }
 
+type StaffMode = 'auto' | 'score' | 'tab'
+
 export default function AudioToMidiPanel({
   onCreated,
   onOpen,
@@ -25,6 +27,7 @@ export default function AudioToMidiPanel({
     null,
   )
   const [instrument, setInstrument] = useState<SupportedInstrument>('guitar')
+  const [staffMode, setStaffMode] = useState<StaffMode>('auto')
 
   async function handleFile(file: File) {
     setBusy(true)
@@ -49,7 +52,13 @@ export default function AudioToMidiPanel({
               ? '键盘'
               : '鼓'
       const title = `${file.name.replace(/\.[^.]+$/, '') || '音频转谱'} · ${instrumentLabel}音频转谱`
-      const gpScore = notesToGpScore(nextResult.notes, title, 120, instrument)
+      const gpScore = notesToGpScore(
+        nextResult.notes,
+        title,
+        120,
+        instrument,
+        staffMode,
+      )
       const buffer = gpScore.bytes.buffer.slice(
         gpScore.bytes.byteOffset,
         gpScore.bytes.byteOffset + gpScore.bytes.byteLength,
@@ -144,10 +153,36 @@ export default function AudioToMidiPanel({
             </button>
           ))}
         </div>
+        <small>鼓类音频仅作参考，转谱结果会量化到 1/16 音符。</small>
+      </div>
+
+      <div className="transcription-options">
+        <span>谱式</span>
+        <div className="segmented compact-segmented" aria-label="选择谱式">
+          {(
+            [
+              ['auto', '自动'],
+              ['score', '五线谱'],
+              ['tab', '六线谱'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={staffMode === value ? 'active' : ''}
+              disabled={busy}
+              onClick={() => setStaffMode(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <small>
-          {instrument === 'guitar' || instrument === 'bass'
-            ? '生成六线谱，并按标准调弦自动分配弦品。'
-            : '生成五线谱；鼓类音频仅作参考。'}
+          {staffMode === 'auto'
+            ? '自动：吉他/贝斯六线谱，键盘/鼓五线谱。'
+            : staffMode === 'score'
+              ? '强制生成五线谱。'
+              : '强制生成六线谱。'}
         </small>
       </div>
 

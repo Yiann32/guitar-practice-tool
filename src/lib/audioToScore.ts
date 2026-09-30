@@ -199,6 +199,7 @@ export function notesToGpScore(
   title: string,
   bpm = 120,
   instrument: SupportedInstrument = 'guitar',
+  staffMode: 'auto' | 'score' | 'tab' = 'auto',
 ): { bytes: Uint8Array; xml: string } {
   const xml = notesToMusicXml(notes, title, bpm)
   const settings = new alphaTab.Settings()
@@ -207,7 +208,7 @@ export function notesToGpScore(
     settings,
   )
   score.title = title || score.title
-  applyInstrument(score, instrument)
+  applyInstrument(score, instrument, staffMode)
   const bytes = new alphaTab.exporter.Gp7Exporter().export(score, settings)
   return { bytes, xml }
 }
@@ -215,6 +216,7 @@ export function notesToGpScore(
 function applyInstrument(
   score: alphaTab.model.Score,
   instrument: SupportedInstrument,
+  staffMode: 'auto' | 'score' | 'tab',
 ): void {
   const track = score.tracks[0]
   if (!track) return
@@ -224,7 +226,12 @@ function applyInstrument(
   const staff = track.staves[0]
   if (!staff) return
 
-  const usesTab = instrument === 'guitar' || instrument === 'bass'
+  const usesTab =
+    staffMode === 'tab'
+      ? true
+      : staffMode === 'score'
+        ? false
+        : instrument === 'guitar' || instrument === 'bass'
   if (!usesTab) {
     staff.showTablature = false
     staff.showStandardNotation = true
@@ -232,7 +239,7 @@ function applyInstrument(
   }
 
   const lowToHigh =
-    instrument === 'guitar' ? [40, 45, 50, 55, 59, 64] : [28, 33, 38, 43]
+    instrument === 'bass' ? [28, 33, 38, 43] : [40, 45, 50, 55, 59, 64]
   staff.stringTuning.tunings = [...lowToHigh].reverse()
   staff.showTablature = true
   staff.showStandardNotation = false
