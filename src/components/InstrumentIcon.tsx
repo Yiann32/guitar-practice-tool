@@ -1,4 +1,5 @@
 import type { SupportedInstrument } from '../lib/instrument'
+import { withBase } from '../lib/baseUrl'
 
 interface InstrumentIconProps {
   kind: SupportedInstrument
@@ -16,7 +17,7 @@ export default function InstrumentIcon({ kind, size = 20 }: InstrumentIconProps)
   return (
     <img
       className="instrument-icon-image"
-      src={`/icons/${kind}.svg`}
+      src={withBase(`icons/${kind}.svg`)}
       width={size}
       height={size}
       alt={LABELS[kind]}

@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from 'react'
 import type { AppTab } from './types'
+import { withBase } from './lib/baseUrl'
 import FretboardModule from './modules/fretboard/FretboardModule'
 import ScoreModule from './modules/score/ScoreModule'
 import SettingsModule from './modules/settings/SettingsModule'
@@ -19,7 +20,7 @@ export default function App() {
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <img src="/icons/guitar.svg" alt="" />
+            <img src={withBase('icons/guitar.svg')} alt="" />
           </span>
           <div>
             <strong>吉他练习工具</strong>

@@ -17,6 +17,7 @@ import {
   saveSong,
 } from '../../data/db'
 import { formatClock, midiToFullName, clamp, pitchClass } from '../../lib/music'
+import { withBase } from '../../lib/baseUrl'
 import { detectInstrument } from '../../lib/instrument'
 import { detectPitchYin } from '../../lib/pitch'
 import type { PitchResult, SongRecord } from '../../types'
@@ -225,7 +226,7 @@ export default function ScoreModule() {
       core: {
         engine: 'svg',
         enableLazyLoading: true,
-        fontDirectory: '/font/',
+        fontDirectory: withBase('font/'),
       },
       display: {
         scale: 0.92,
@@ -241,7 +242,7 @@ export default function ScoreModule() {
       },
       player: {
         playerMode: alphaTab.PlayerMode.EnabledSynthesizer,
-        soundFont: '/soundfont/sonivox.sf2',
+        soundFont: withBase('soundfont/sonivox.sf2'),
         scrollElement: document.body,
         scrollMode: alphaTab.ScrollMode.Off,
         enableCursor: true,

@@ -6,10 +6,11 @@ import {
 } from '@spotify/basic-pitch'
 import { Midi } from '@tonejs/midi'
 import type { TranscribedNote, TranscribeResult } from '../types'
+import { withBase } from './baseUrl'
 import { clamp } from './music'
 import { saveOrShareFile } from './nativeFile'
 
-const MODEL_URL = '/models/basic-pitch/model.json'
+const MODEL_URL = withBase('models/basic-pitch/model.json')
 const TARGET_SAMPLE_RATE = 22050
 const MAX_AUDIO_SECONDS = 300
 
