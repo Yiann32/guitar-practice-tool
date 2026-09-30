@@ -35,6 +35,8 @@
 - 音频转 MIDI
   - 浏览器内置 Basic Pitch 模型
   - 标注 Beta；音频导入后自动识别、量化并直接转换成 GP7 曲谱加入曲谱列表
+  - 可选择吉他、贝斯、键盘、鼓四种目标乐器
+  - 谱式支持自动/五线谱/六线谱；自动模式为吉他/贝斯六线谱，键盘/鼓五线谱
 - 数据
   - IndexedDB 本地保存曲谱、进度和练习统计
   - ZIP 备份导出与导入
@@ -114,3 +116,8 @@ Android 端使用 Capacitor，包名为 `com.guitarpractice.app`，支持 Androi
 - [极简主义桌面版](docs/screenshots/minimal-desktop.png)
 - [移动端布局](docs/screenshots/minimal-mobile.png)
 - [减少动效模式](docs/screenshots/minimal-reduced-motion.png)
+
+## GitHub
+
+- 仓库：[Yiann32/guitar-practice-tool](https://github.com/Yiann32/guitar-practice-tool)
+- 乐器图标使用 `参考/` 目录下的吉他、贝斯、键盘、架子鼓 SVG，并同步到 `public/icons/`
