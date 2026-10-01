@@ -797,8 +797,8 @@ export default function ScoreModule() {
       followGate.minRms = Math.min(followGate.minRms, result.rms)
       const silent = result.midi === null
       const changedNote = result.midi !== null && result.midi !== followGate.lastMidi
-      const decayed = followGate.minRms < followGate.peakRms * 0.6
-      const newAttack = decayed && result.rms > Math.max(0.015, followGate.minRms * 2)
+      const decayed = followGate.minRms < followGate.peakRms * 0.7
+      const newAttack = decayed && result.rms > Math.max(0.012, followGate.minRms * 1.7)
       if (silent || changedNote || newAttack) {
         followGate.needReattack = false
         micStableMidiRef.current = null
@@ -827,9 +827,10 @@ export default function ScoreModule() {
     if (micStableCountRef.current < 3) return
 
     const now = Date.now()
-    if (now - lastMicJudgementRef.current < 260) return
-    lastMicJudgementRef.current = now
     const mode = practiceModeRef.current
+    // 跟练靠音头门控防重复，冷却可以更短，避免快速重复音被卡住。
+    if (now - lastMicJudgementRef.current < (mode === 'follow' ? 120 : 260)) return
+    lastMicJudgementRef.current = now
     if (mode === 'play') return
 
     const events = practiceEventsRef.current
