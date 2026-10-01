@@ -2120,13 +2120,6 @@ input[type="range"] {
   fill: #fff;
 }
 
-.follow-skip-hint {
-  margin-left: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-}
-
 .scale-sequence span.current {
   border-color: var(--ink);
   background: var(--ink);

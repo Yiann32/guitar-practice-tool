@@ -30,6 +30,11 @@ const BARS_PER_ROW = 4
 const SCORE_HEIGHT_KEY = 'guitar-practice-score-height'
 const SAMPLE_FILE = withBase('samples/smoke-on-the-water.gp5')
 const SAMPLE_TITLE = 'Smoke On The Water'
+/** 跟练遇到闷音（x）时，如果没有检测到音头，多久自动过掉这一步。 */
+const MUTED_STEP_TIMEOUT_MS = 2000
+/** 判定“闷音这一下弹了”的音量门槛：相对本步最低值抬升 1.5 倍，且不低于 0.02。 */
+const MUTED_ONSET_FLOOR = 0.02
+const MUTED_ONSET_RATIO = 1.5
 
 function initialScoreHeight(): number {
   if (typeof window === 'undefined') return 460
@@ -159,6 +164,9 @@ export default function ScoreModule() {
   const followMarkerRef = useRef<HTMLDivElement>(null)
   /** 跟练：命中后必须等到下一次“音头”才允许再次判定，避免按住不放进同音。 */
   const followGateRef = useRef({ needReattack: false, lastMidi: 0, peakRms: 0, minRms: 1 })
+  /** 跟练当前是否停在“闷音”这一步：记录步骤下标与该步内观测到的最低音量。 */
+  const followMutedRef = useRef<{ index: number; minRms: number } | null>(null)
+  const followMutedTimerRef = useRef<number | null>(null)
   const accompanyMatchedRef = useRef<Set<number>>(new Set())
   const accompanyMissedRef = useRef<Set<number>>(new Set())
   const accompanyTimingRef = useRef(0)
@@ -181,7 +189,6 @@ export default function ScoreModule() {
   const [micOn, setMicOn] = useState(false)
   const [detectedNote, setDetectedNote] = useState('')
   const [followTarget, setFollowTarget] = useState<PracticeEvent | null>(null)
-  const [followSkipped, setFollowSkipped] = useState(0)
   const [practiceSummary, setPracticeSummary] = useState<PracticeSummary | null>(null)
   const [audioToolOpen, setAudioToolOpen] = useState(false)
   const [pageTurn, setPageTurn] = useState<'idle' | 'next' | 'prev'>('idle')
@@ -639,29 +646,62 @@ export default function ScoreModule() {
     return practiceEventsRef.current.filter((event) => !event.muted)
   }
 
-  /** 从指定下标开始，跳过闷音拍，返回下一个需要弹奏的事件下标。 */
-  function nextPlayableIndex(from: number): number {
+  /** 跳过整段连续的闷音拍：它们算作一个“闷音步骤”。 */
+  function mutedRunEnd(index: number): number {
     const events = practiceEventsRef.current
-    let index = Math.max(0, from)
-    while (index < events.length && events[index].muted) index += 1
-    return index
+    let next = index
+    while (next < events.length && events[next].muted) next += 1
+    return next
+  }
+
+  function clearMutedStepTimer() {
+    if (followMutedTimerRef.current !== null) {
+      window.clearTimeout(followMutedTimerRef.current)
+      followMutedTimerRef.current = null
+    }
+  }
+
+  /** 闷音步骤完成（弹了一下、或超时）：一次性越过整段闷音拍。 */
+  function completeMutedStep() {
+    const step = followMutedRef.current
+    if (!step) return
+    const events = practiceEventsRef.current
+    if (followIndexRef.current !== step.index || !events[step.index]?.muted) return
+    followMutedRef.current = null
+    clearMutedStepTimer()
+    syncFollowTarget(mutedRunEnd(step.index))
+  }
+
+  /** 目标切换时重置闷音步骤状态：是闷音就重新计时，否则清掉定时器。 */
+  function syncMutedStep(target: PracticeEvent | null) {
+    clearMutedStepTimer()
+    if (!target?.muted) {
+      followMutedRef.current = null
+      return
+    }
+    followMutedRef.current = { index: followIndexRef.current, minRms: Number.POSITIVE_INFINITY }
+    followMutedTimerRef.current = window.setTimeout(() => {
+      followMutedTimerRef.current = null
+      completeMutedStep()
+    }, MUTED_STEP_TIMEOUT_MS)
   }
 
   function syncFollowTarget(index: number, withPageTurn = true): number {
     const events = practiceEventsRef.current
-    const next = nextPlayableIndex(index)
+    const next = clamp(index, 0, events.length)
     followIndexRef.current = next
     const target = events[next] ?? null
     setFollowTarget(target)
-    setFollowSkipped(Math.max(0, next - index))
-    const playable = playableEvents()
-    const completed = target ? playable.indexOf(target) : playable.length
+    syncMutedStep(target)
+    // 进度只统计实音，闷音步骤不计入分子分母。
+    const total = playableEvents().length
+    const completed = events.slice(0, next).filter((event) => !event.muted).length
     setLiveScore({
       pitch: 100,
       rhythm: 100,
-      overall: playable.length > 0 ? Math.round((completed / playable.length) * 100) : 0,
+      overall: total > 0 ? Math.round((completed / total) * 100) : 0,
       hits: completed,
-      total: playable.length,
+      total,
       averageMs: 0,
     })
     highlightPracticeEvent(target)
@@ -685,6 +725,8 @@ export default function ScoreModule() {
     accompanyTimingRef.current = 0
     followIndexRef.current = 0
     followGateRef.current = { needReattack: false, lastMidi: 0, peakRms: 0, minRms: 1 }
+    followMutedRef.current = null
+    clearMutedStepTimer()
     setLiveScore({ pitch: 0, rhythm: 0, overall: 0, hits: 0, total: 0, averageMs: 0 })
     setPracticeSummary(null)
   }
@@ -697,10 +739,9 @@ export default function ScoreModule() {
       syncFollowTarget(0, false)
       return
     }
-    const first = nextPlayableIndex(0)
-    followIndexRef.current = first
-    setFollowTarget(events[first] ?? null)
-    setFollowSkipped(first)
+    followIndexRef.current = 0
+    setFollowTarget(events[0] ?? null)
+    syncMutedStep(null)
   }
 
   function practiceSummaryFromState(): PracticeSummary {
@@ -788,18 +829,30 @@ export default function ScoreModule() {
   }
 
   function handleScorePitch(result: PitchResult) {
-    // 跟练：上一次命中后先关闸，直到检测到新的音头（静音、换音，
-    // 或者音量先衰减、再重新抬升）才允许继续判定。
+    // 跟练的闷音步骤：只判“有没有弹响”，不判音高，也不看识别置信度。
+    // 闷音扫弦会被消耗在这一步上，不会泄漏到后面那个实音上。
+    const mutedStep = followMutedRef.current
+    if (practiceModeRef.current === 'follow' && mutedStep) {
+      mutedStep.minRms = Math.min(mutedStep.minRms, result.rms)
+      const onset =
+        result.rms > Math.max(MUTED_ONSET_FLOOR, mutedStep.minRms * MUTED_ONSET_RATIO)
+      if (onset) completeMutedStep()
+      return
+    }
+
+    // 跟练：上一次命中后先关闸，直到检测到真正的音头
+    // （静音，或者音量先衰减、再重新抬升）才允许继续判定。
+    // 注意：只“音高变了”不算音头——否则上一个和弦的余音在 60/55 之间抖动时，
+    // 会被当成新音，把闷音后面那个共享音高的音符也判成正确。
     // 这样同一个音重复出现时，必须真的再弹一次，而不是一直按住、
     // 靠上一个音的余音把后面的同音也判成正确。
     const followGate = followGateRef.current
     if (practiceModeRef.current === 'follow' && followGate.needReattack) {
       followGate.minRms = Math.min(followGate.minRms, result.rms)
       const silent = result.midi === null
-      const changedNote = result.midi !== null && result.midi !== followGate.lastMidi
       const decayed = followGate.minRms < followGate.peakRms * 0.7
       const newAttack = decayed && result.rms > Math.max(0.012, followGate.minRms * 1.7)
-      if (silent || changedNote || newAttack) {
+      if (silent || newAttack) {
         followGate.needReattack = false
         micStableMidiRef.current = null
         micStableCountRef.current = 0
@@ -990,6 +1043,7 @@ export default function ScoreModule() {
     if (mode === 'play') {
       stopScoreMicrophone()
       apiRef.current?.clearPlaybackRangeHighlight()
+      syncMutedStep(null)
       updateFollowMarker(null)
       return
     }
@@ -1110,6 +1164,10 @@ export default function ScoreModule() {
   useEffect(
     () => () => {
       cancelAnimationFrame(micAnimationRef.current)
+      if (followMutedTimerRef.current !== null) {
+        window.clearTimeout(followMutedTimerRef.current)
+        followMutedTimerRef.current = null
+      }
       micStreamRef.current?.getTracks().forEach((track) => track.stop())
       void micContextRef.current?.close()
       micStreamRef.current = null
@@ -1482,10 +1540,9 @@ export default function ScoreModule() {
             )}
             {!activePdf && practiceMode === 'follow' && followTarget && (
               <span className="active-notes">
-                请弹奏：{followTarget.names.join(' ')}
-                {followSkipped > 0 && (
-                  <em className="follow-skip-hint">（已跳过 {followSkipped} 个闷音）</em>
-                )}
+                {followTarget.muted
+                  ? '闷音 · 弹一下继续，2 秒后自动跳过'
+                  : `请弹奏：${followTarget.names.join(' ')}`}
               </span>
             )}
           </div>
