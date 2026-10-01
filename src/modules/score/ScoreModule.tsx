@@ -156,6 +156,9 @@ export default function ScoreModule() {
   const lastMicJudgementRef = useRef(0)
   const practiceEventsRef = useRef<PracticeEvent[]>([])
   const followIndexRef = useRef(0)
+  const followMarkerRef = useRef<HTMLDivElement>(null)
+  /** 跟练：命中后必须等到下一次“音头”才允许再次判定，避免按住不放进同音。 */
+  const followGateRef = useRef({ needReattack: false, lastMidi: 0, peakRms: 0, minRms: 1 })
   const accompanyMatchedRef = useRef<Set<number>>(new Set())
   const accompanyMissedRef = useRef<Set<number>>(new Set())
   const accompanyTimingRef = useRef(0)
@@ -681,6 +684,7 @@ export default function ScoreModule() {
     accompanyMissedRef.current = new Set()
     accompanyTimingRef.current = 0
     followIndexRef.current = 0
+    followGateRef.current = { needReattack: false, lastMidi: 0, peakRms: 0, minRms: 1 }
     setLiveScore({ pitch: 0, rhythm: 0, overall: 0, hits: 0, total: 0, averageMs: 0 })
     setPracticeSummary(null)
   }
@@ -746,10 +750,64 @@ export default function ScoreModule() {
     }
     applyRange()
     api.tickPosition = event.tick
-    window.setTimeout(applyRange, 30)
+    updateFollowMarker(event.beat)
+    window.setTimeout(() => {
+      applyRange()
+      updateFollowMarker(event.beat)
+    }, 60)
+  }
+
+  /**
+   * 跟练模式的目标音符定位框：约两个字宽、只框住当前该弹的那个音，
+   * 画在谱面图层下方，所以不会遮住任何音符。
+   */
+  function updateFollowMarker(beat: alphaTab.model.Beat | null) {
+    const marker = followMarkerRef.current
+    if (!marker) return
+    const api = apiRef.current
+    if (!beat || practiceModeRef.current !== 'follow' || !api) {
+      marker.style.display = 'none'
+      return
+    }
+    const bounds = api.boundsLookup?.findBeat(beat)
+    const host = renderTargetRef.current
+    const surface = host?.querySelector<HTMLElement>('.at-surface') ?? host
+    if (!bounds || !host || !surface) {
+      marker.style.display = 'none'
+      return
+    }
+    const hostRect = host.getBoundingClientRect()
+    const surfaceRect = surface.getBoundingClientRect()
+    const r = bounds.realBounds
+    const width = clamp(r.w * 2, 16, 34)
+    marker.style.display = 'block'
+    marker.style.left = `${surfaceRect.left - hostRect.left + r.x + r.w / 2 - width / 2}px`
+    marker.style.top = `${surfaceRect.top - hostRect.top + r.y}px`
+    marker.style.width = `${width}px`
+    marker.style.height = `${r.h}px`
   }
 
   function handleScorePitch(result: PitchResult) {
+    // 跟练：上一次命中后先关闸，直到检测到新的音头（静音、换音，
+    // 或者音量先衰减、再重新抬升）才允许继续判定。
+    // 这样同一个音重复出现时，必须真的再弹一次，而不是一直按住、
+    // 靠上一个音的余音把后面的同音也判成正确。
+    const followGate = followGateRef.current
+    if (practiceModeRef.current === 'follow' && followGate.needReattack) {
+      followGate.minRms = Math.min(followGate.minRms, result.rms)
+      const silent = result.midi === null
+      const changedNote = result.midi !== null && result.midi !== followGate.lastMidi
+      const decayed = followGate.minRms < followGate.peakRms * 0.6
+      const newAttack = decayed && result.rms > Math.max(0.015, followGate.minRms * 2)
+      if (silent || changedNote || newAttack) {
+        followGate.needReattack = false
+        micStableMidiRef.current = null
+        micStableCountRef.current = 0
+      } else {
+        return
+      }
+    }
+
     if (result.midi === null || result.confidence < 0.72) {
       if (result.midi === null) {
         micStableMidiRef.current = null
@@ -759,6 +817,7 @@ export default function ScoreModule() {
     }
 
     setDetectedNote(midiToFullName(result.midi))
+
     if (micStableMidiRef.current === result.midi) {
       micStableCountRef.current += 1
     } else {
@@ -784,6 +843,10 @@ export default function ScoreModule() {
         return
       }
       const next = syncFollowTarget(followIndexRef.current + 1)
+      followGate.needReattack = true
+      followGate.lastMidi = result.midi!
+      followGate.peakRms = result.rms
+      followGate.minRms = result.rms
       if (next >= events.length) {
         apiRef.current?.clearPlaybackRangeHighlight()
       }
@@ -926,6 +989,7 @@ export default function ScoreModule() {
     if (mode === 'play') {
       stopScoreMicrophone()
       apiRef.current?.clearPlaybackRangeHighlight()
+      updateFollowMarker(null)
       return
     }
     void startScoreMicrophone()
@@ -1028,6 +1092,10 @@ export default function ScoreModule() {
       api.settings.display.barsPerRow = next
       api.updateSettings()
       api.render()
+      window.setTimeout(
+        () => updateFollowMarker(practiceEventsRef.current[followIndexRef.current]?.beat ?? null),
+        240,
+      )
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
@@ -1567,7 +1635,10 @@ export default function ScoreModule() {
                   setSheetProgress(range > 0 ? element.scrollTop / range : 0)
                 }}
               >
-                <div className="alphaTab-target" ref={renderTargetRef} />
+                <div className="sheet-content">
+                  <div className="follow-marker" ref={followMarkerRef} aria-hidden="true" />
+                  <div className="alphaTab-target" ref={renderTargetRef} />
+                </div>
               </div>
               <div
                 className="score-resize-handle"
