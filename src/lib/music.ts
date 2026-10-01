@@ -155,3 +155,87 @@ export function formatClock(seconds: number): string {
   const remainder = total % 60
   return `${minutes}:${remainder.toString().padStart(2, '0')}`
 }
+
+export interface ChordType {
+  id: string
+  name: string
+  suffix: string
+  intervals: number[]
+}
+
+export const CHORD_TYPES: ChordType[] = [
+  { id: 'major', name: '大三和弦', suffix: '', intervals: [0, 4, 7] },
+  { id: 'minor', name: '小三和弦', suffix: 'm', intervals: [0, 3, 7] },
+  { id: 'dom7', name: '属七和弦', suffix: '7', intervals: [0, 4, 7, 10] },
+  { id: 'maj7', name: '大七和弦', suffix: 'maj7', intervals: [0, 4, 7, 11] },
+  { id: 'min7', name: '小七和弦', suffix: 'm7', intervals: [0, 3, 7, 10] },
+  { id: 'sus4', name: '挂四和弦', suffix: 'sus4', intervals: [0, 5, 7] },
+  { id: 'power', name: '强力和弦', suffix: '5', intervals: [0, 7, 12] },
+]
+
+export interface ChordShapeNote {
+  stringIndex: number
+  fret: number
+  pitchClass: number
+}
+
+function chordShapeAt(
+  tuning: number[],
+  rootPc: number,
+  intervals: number[],
+  span: number,
+  base: number,
+): ChordShapeNote[] {
+  const toneSet = new Set(intervals.map((interval) => pitchClass(rootPc + interval)))
+  const shape: ChordShapeNote[] = []
+  tuning.forEach((stringMidi, stringIndex) => {
+    const maxFret = base + span
+    if (stringIndex > 0 && base <= 2 && toneSet.has(pitchClass(stringMidi))) {
+      shape.push({ stringIndex, fret: 0, pitchClass: pitchClass(stringMidi) })
+      return
+    }
+    let chosen = -1
+    for (let fret = Math.max(0, stringIndex === 0 ? 0 : base); fret <= maxFret; fret += 1) {
+      const pc = pitchClass(stringMidi + fret)
+      if (!toneSet.has(pc)) continue
+      if (chosen < 0) chosen = fret
+      if (stringIndex === 0 && pc === rootPc) {
+        chosen = fret
+        break
+      }
+    }
+    if (chosen >= 0) {
+      shape.push({ stringIndex, fret: chosen, pitchClass: pitchClass(stringMidi + chosen) })
+    }
+  })
+  return shape
+}
+
+/**
+ * 推导一个便于按奏的和弦指法：在若干候选把位中挑选“覆盖和弦音最多、
+ * 尽量低把位、低音优先落在根音”的那一组，未用到的弦视为闷弦。
+ */
+export function buildChordShape(
+  tuning: number[],
+  rootPc: number,
+  intervals: number[],
+  maxFret: number,
+  span = 4,
+): ChordShapeNote[] {
+  const toneCount = new Set(intervals.map((interval) => pitchClass(rootPc + interval))).size
+  const limit = Math.max(0, Math.min(maxFret, 15) - span)
+  let best: ChordShapeNote[] = []
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (let base = 0; base <= limit; base += 1) {
+    const shape = chordShapeAt(tuning, rootPc, intervals, span, base)
+    if (shape.length === 0) continue
+    const covered = new Set(shape.map((note) => note.pitchClass)).size
+    const rootInBass = shape[0]?.pitchClass === rootPc ? 6 : 0
+    const score = covered * 100 + rootInBass - base * 2
+    if (score > bestScore || (score === bestScore && covered === toneCount)) {
+      bestScore = score
+      best = shape
+    }
+  }
+  return best
+}

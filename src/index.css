@@ -1143,6 +1143,82 @@ input[type="checkbox"] {
   color: #ffffff;
 }
 
+.chord-tones {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.chord-tones span {
+  display: grid;
+  min-width: 66px;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--muted);
+  text-align: center;
+  background: #ffffff;
+  transition:
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out-expo);
+}
+
+.chord-tones span strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.chord-tones span small {
+  font-size: 10px;
+}
+
+.chord-tones span.done {
+  border-color: rgba(123, 131, 196, 0.4);
+  background: var(--accent-soft);
+  transform: translateY(-2px);
+}
+
+.chord-tones span.done strong,
+.chord-tones span.done small {
+  color: var(--accent-strong);
+}
+
+.chord-shape-hint {
+  flex: 1 1 220px;
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.6;
+}
+
+.fr-settings-panel .segmented {
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.fr-settings-panel .segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.fr-settings-panel .segmented button {
+  flex: 1 0 auto;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.stat-row .button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .pdf-practice {
   display: grid;
   gap: 10px;
@@ -1960,8 +2036,20 @@ input[type="range"] {
   stroke: #fff;
 }
 
+.target-marker.is-done {
+  fill: var(--accent-strong);
+  stroke: #fff;
+}
+
 .marker-text {
   fill: #fff;
+}
+
+.follow-skip-hint {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
 }
 
 .scale-sequence span.current {

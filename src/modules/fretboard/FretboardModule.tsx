@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  buildChordShape,
+  CHORD_TYPES,
   findFretPositions,
   midiToFullName,
   midiToNoteName,
@@ -7,13 +9,14 @@ import {
   pitchClass,
   INSTRUMENT_PITCH_RANGES,
   TUNING_PRESETS_BY_INSTRUMENT,
+  type ChordShapeNote,
   type FretInstrument,
 } from '../../lib/music'
 import { detectPitchYin, rmsToDb } from '../../lib/pitch'
 import { getFretboardProgress, saveFretboardProgress } from '../../data/db'
 import type { FretboardProgressRecord, PitchResult } from '../../types'
 
-type PracticeMode = 'note' | 'scale'
+type PracticeMode = 'note' | 'scale' | 'chord'
 type NoteSet = 'all' | 'natural' | 'accidental'
 type ScaleDirection = 'up' | 'down' | 'updown'
 
@@ -36,6 +39,31 @@ interface ScaleStep {
   stringIndex: number
   fret: number
 }
+
+interface ChordQuestion {
+  rootPc: number
+  name: string
+  tones: number[]
+  shape: ChordShapeNote[]
+  progressionName: string
+  index: number
+  total: number
+}
+
+interface ChordProgression {
+  id: string
+  name: string
+  /** 相对根音的半音偏移，用于生成和弦进行。 */
+  offsets: number[]
+}
+
+const CHORD_PROGRESSIONS: ChordProgression[] = [
+  { id: 'single', name: '单和弦循环', offsets: [0] },
+  { id: 'pop', name: '流行 I–V–vi–IV', offsets: [0, 7, 9, 5] },
+  { id: 'fifties', name: '50 年代 I–vi–IV–V', offsets: [0, 9, 5, 7] },
+  { id: 'blues', name: '布鲁斯 I–IV–V', offsets: [0, 5, 7] },
+  { id: 'canon', name: '卡农进行', offsets: [0, 7, 9, 4, 5, 0, 5, 7] },
+]
 
 const SCALES: ScaleDefinition[] = [
   { id: 'major', name: '大调', intervals: [0, 2, 4, 5, 7, 9, 11] },
@@ -79,20 +107,27 @@ function noteMatches(
   return exactOctave ? heardMidi === targetMidi : pitchClass(heardMidi) === pitchClass(targetMidi)
 }
 
+interface FretTarget {
+  stringIndex: number
+  fret: number
+  label?: string
+  done?: boolean
+}
+
 interface FretboardSvgProps {
   tuning: number[]
   maxFret: number
-  target: { stringIndex: number; fret: number } | null
+  targets: FretTarget[]
+  targetsVisible: boolean
   detected: { stringIndex: number; fret: number }[]
-  revealed: boolean
 }
 
 function FretboardSvg({
   tuning,
   maxFret,
-  target,
+  targets,
+  targetsVisible,
   detected,
-  revealed,
 }: FretboardSvgProps) {
   const left = 58
   const top = 30
@@ -180,24 +215,25 @@ function FretboardSvg({
           className="detected-marker"
         />
       ))}
-      {revealed && target && (
-        <g>
-          <circle
-            cx={xForFret(target.fret)}
-            cy={yForString(target.stringIndex)}
-            r={14}
-            className="target-marker"
-          />
-          <text
-            x={xForFret(target.fret)}
-            y={yForString(target.stringIndex) + 5}
-            textAnchor="middle"
-            className="marker-text"
-          >
-            {target.fret}
-          </text>
-        </g>
-      )}
+      {targetsVisible &&
+        targets.map((target) => (
+          <g key={`target-${target.stringIndex}-${target.fret}`}>
+            <circle
+              cx={xForFret(target.fret)}
+              cy={yForString(target.stringIndex)}
+              r={14}
+              className={`target-marker ${target.done ? 'is-done' : ''}`}
+            />
+            <text
+              x={xForFret(target.fret)}
+              y={yForString(target.stringIndex) + 5}
+              textAnchor="middle"
+              className="marker-text"
+            >
+              {target.label ?? target.fret}
+            </text>
+          </g>
+        ))}
     </svg>
   )
 }
@@ -218,6 +254,10 @@ export default function FretboardModule() {
   const scaleSequenceRef = useRef<ScaleStep[]>([])
   const scaleIndexRef = useRef(0)
   const currentScaleChipRef = useRef<HTMLSpanElement | null>(null)
+  const chordQuestionRef = useRef<ChordQuestion | null>(null)
+  const chordCollectedRef = useRef<number[]>([])
+  const chordIndexRef = useRef(0)
+  const nextChordRef = useRef<() => void>(() => {})
   const instrumentRef = useRef<FretInstrument>('guitar')
 
   const [mode, setMode] = useState<PracticeMode>('note')
@@ -239,6 +279,12 @@ export default function FretboardModule() {
   const [scaleOctaves, setScaleOctaves] = useState(1)
   const [scaleSequence, setScaleSequence] = useState<ScaleStep[]>([])
   const [scaleIndex, setScaleIndex] = useState(0)
+  const [chordRoot, setChordRoot] = useState(0)
+  const [chordTypeId, setChordTypeId] = useState('major')
+  const [progressionId, setProgressionId] = useState('single')
+  const [chordQuestion, setChordQuestion] = useState<ChordQuestion | null>(null)
+  const [chordCollected, setChordCollected] = useState<number[]>([])
+  const [chordVersion, setChordVersion] = useState(0)
   const [question, setQuestion] = useState<Question | null>(null)
   const [questionVersion, setQuestionVersion] = useState(0)
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now())
@@ -268,7 +314,8 @@ export default function FretboardModule() {
     localStorage.setItem('fretboard-instrument', instrument)
   }, [instrument])
 
-  const progressId = mode === 'scale' ? 'fretboard-scale' : 'fretboard-note'
+  const progressId =
+    mode === 'scale' ? 'fretboard-scale' : mode === 'chord' ? 'fretboard-chord' : 'fretboard-note'
 
   useEffect(() => {
     void getFretboardProgress(progressId).then((saved) => {
@@ -389,6 +436,10 @@ export default function FretboardModule() {
   }
 
   function nextQuestion() {
+    if (mode === 'chord') {
+      nextChord()
+      return
+    }
     if (mode === 'scale') {
       const sequence = scaleSequenceRef.current
       if (sequence.length === 0) {
@@ -407,9 +458,62 @@ export default function FretboardModule() {
 
   nextQuestionRef.current = nextQuestion
 
+  function buildChordQuestion(index: number): ChordQuestion | null {
+    const type = CHORD_TYPES.find((item) => item.id === chordTypeId) ?? CHORD_TYPES[0]
+    const progression =
+      CHORD_PROGRESSIONS.find((item) => item.id === progressionId) ?? CHORD_PROGRESSIONS[0]
+    const offset = progression.offsets[index % progression.offsets.length]
+    const rootPc = pitchClass(chordRoot + offset)
+    const shape = buildChordShape(tuning, rootPc, type.intervals, maxFret)
+    if (shape.length === 0) return null
+    const shapeTones = [...new Set(shape.map((note) => note.pitchClass))]
+    return {
+      rootPc,
+      name: `${midiToNoteName(rootPc)}${type.suffix}`,
+      tones: [rootPc, ...shapeTones.filter((pc) => pc !== rootPc)],
+      shape,
+      progressionName: progression.name,
+      index,
+      total: progression.offsets.length,
+    }
+  }
+
+  function startChordPractice(index: number) {
+    const next = buildChordQuestion(index)
+    chordIndexRef.current = index
+    chordQuestionRef.current = next
+    chordCollectedRef.current = []
+    setChordQuestion(next)
+    setChordCollected([])
+    setChordVersion((value) => value + 1)
+    setQuestionStartedAt(Date.now())
+    setRevealed(true)
+    setFeedbackTone('idle')
+    stableMidiRef.current = null
+    stableCountRef.current = 0
+    setFeedback(
+      next
+        ? '逐个弹出高亮标记的和弦音，识别到就会打勾；分解和弦或反复扫弦都可以'
+        : '当前设置推导不出指法，请调整把位或调弦',
+    )
+  }
+
+  function nextChord() {
+    const progression =
+      CHORD_PROGRESSIONS.find((item) => item.id === progressionId) ?? CHORD_PROGRESSIONS[0]
+    const nextIndex = (chordIndexRef.current + 1) % progression.offsets.length
+    startChordPractice(nextIndex)
+  }
+
+  nextChordRef.current = nextChord
+
   useEffect(() => {
     if (mode === 'scale') {
       beginScaleSequence()
+      return
+    }
+    if (mode === 'chord') {
+      startChordPractice(0)
       return
     }
     nextQuestionRef.current()
@@ -424,11 +528,89 @@ export default function FretboardModule() {
     scaleId,
     scaleDirection,
     scaleOctaves,
+    chordRoot,
+    chordTypeId,
+    progressionId,
     instrument,
     customTuning,
   ])
 
+  function handleChordPitch(result: PitchResult) {
+    const chord = chordQuestionRef.current
+    if (!chord || result.midi === null || result.confidence < 0.72) {
+      if (result.midi === null) {
+        stableMidiRef.current = null
+        stableCountRef.current = 0
+      }
+      return
+    }
+
+    if (stableMidiRef.current === result.midi) {
+      stableCountRef.current += 1
+    } else {
+      stableMidiRef.current = result.midi
+      stableCountRef.current = 1
+    }
+    if (stableCountRef.current < 3) return
+
+    const now = Date.now()
+    if (now - lastJudgementRef.current < 220) return
+    lastJudgementRef.current = now
+
+    const pc = pitchClass(result.midi)
+    if (!chord.tones.includes(pc)) {
+      setFeedback(`再试一次 · ${midiToFullName(result.midi)} 不属于 ${chord.name}`)
+      setFeedbackTone('wrong')
+      setProgress((previous) => ({
+        ...previous,
+        attempts: previous.attempts + 1,
+        wrong: previous.wrong + 1,
+        streak: 0,
+        updatedAt: Date.now(),
+      }))
+      return
+    }
+    if (chordCollectedRef.current.includes(pc)) return
+
+    const collected = [...chordCollectedRef.current, pc]
+    chordCollectedRef.current = collected
+    setChordCollected(collected)
+    const remaining = chord.tones.filter((tone) => !collected.includes(tone))
+    const responseMs = now - questionStartedAt
+    setProgress((previous) => {
+      const streak = previous.streak + 1
+      return {
+        ...previous,
+        attempts: previous.attempts + 1,
+        correct: previous.correct + 1,
+        streak,
+        bestStreak: Math.max(previous.bestStreak, streak),
+        totalResponseMs: previous.totalResponseMs + responseMs,
+        updatedAt: Date.now(),
+      }
+    })
+
+    if (remaining.length === 0) {
+      setProgress((previous) => ({
+        ...previous,
+        completed: (previous.completed ?? 0) + 1,
+        updatedAt: Date.now(),
+      }))
+      setFeedbackTone('correct')
+      setFeedback(`${chord.name} 完成 · 共 ${chord.tones.length} 个和弦音`)
+      window.setTimeout(() => nextChordRef.current(), 900)
+      return
+    }
+
+    setFeedbackTone('correct')
+    setFeedback(`${midiToNoteName(pc)} 已识别 · 还差 ${remaining.length} 个和弦音`)
+  }
+
   function handleDetectedPitch(result: PitchResult) {
+    if (mode === 'chord') {
+      handleChordPitch(result)
+      return
+    }
     const current = questionRef.current
     if (!current || answeredRef.current || result.midi === null || result.confidence < 0.72) {
       if (result.midi === null) {
@@ -614,6 +796,22 @@ export default function FretboardModule() {
   const targetPositions = question
     ? [{ stringIndex: question.stringIndex, fret: question.fret }]
     : []
+  const chordTargets =
+    mode === 'chord' && chordQuestion
+      ? chordQuestion.shape.map((note) => ({
+          stringIndex: note.stringIndex,
+          fret: note.fret,
+          done: chordCollected.includes(note.pitchClass),
+        }))
+      : []
+  const fretTargets: FretTarget[] = mode === 'chord' ? chordTargets : targetPositions
+  const fretTargetsVisible = mode === 'chord' ? chordTargets.length > 0 : revealed
+  const chordShapeText =
+    mode === 'chord' && chordQuestion
+      ? chordQuestion.shape
+          .map((note) => `${tuning.length - note.stringIndex} 弦 ${note.fret} 品`)
+          .join(' · ')
+      : ''
 
   return (
     <div className="module fretboard-module">
@@ -622,7 +820,9 @@ export default function FretboardModule() {
           <div>
             <p className="eyebrow">Fretboard practice</p>
             <h2>指板练习</h2>
-            <p className="muted">麦克风实时识别单音，按吉他六弦规则练习音位与音阶。</p>
+            <p className="muted">
+              麦克风实时识别单音，按当前乐器弦序练习音位、音阶与和弦。
+            </p>
           </div>
           <button
             className={`button ${micOn ? 'danger' : 'primary'}`}
@@ -665,6 +865,13 @@ export default function FretboardModule() {
           >
             音阶练习
           </button>
+          <button
+            type="button"
+            className={mode === 'chord' ? 'active' : ''}
+            onClick={() => setMode('chord')}
+          >
+            和弦练习
+          </button>
         </div>
 
         <div className="control-grid">
@@ -698,7 +905,7 @@ export default function FretboardModule() {
               ))}
             </select>
           </label>
-          {mode === 'note' ? (
+          {mode === 'note' && (
             <label>
               <span>音集</span>
               <select
@@ -710,7 +917,8 @@ export default function FretboardModule() {
                 <option value="accidental">升降音</option>
               </select>
             </label>
-          ) : (
+          )}
+          {mode === 'scale' && (
             <>
               <label>
                 <span>调式</span>
@@ -763,14 +971,59 @@ export default function FretboardModule() {
               </label>
             </>
           )}
-          <label className="checkbox wide">
-            <input
-              type="checkbox"
-              checked={exactOctave}
-              onChange={(event) => setExactOctave(event.target.checked)}
-            />
-            必须弹对八度，而不只是音名
-          </label>
+          {mode === 'chord' && (
+            <>
+              <label>
+                <span>根音</span>
+                <select
+                  value={chordRoot}
+                  onChange={(event) => setChordRoot(Number(event.target.value))}
+                >
+                  {Array.from({ length: 12 }, (_, index) => (
+                    <option key={index} value={index}>
+                      {midiToNoteName(index)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>和弦类型</span>
+                <select
+                  value={chordTypeId}
+                  onChange={(event) => setChordTypeId(event.target.value)}
+                >
+                  {CHORD_TYPES.map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>和弦进行</span>
+                <select
+                  value={progressionId}
+                  onChange={(event) => setProgressionId(event.target.value)}
+                >
+                  {CHORD_PROGRESSIONS.map((progression) => (
+                    <option key={progression.id} value={progression.id}>
+                      {progression.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          {mode !== 'chord' && (
+            <label className="checkbox wide">
+              <input
+                type="checkbox"
+                checked={exactOctave}
+                onChange={(event) => setExactOctave(event.target.checked)}
+              />
+              必须弹对八度，而不只是音名
+            </label>
+          )}
         </div>
 
         {tuningId === 'custom' && (
@@ -792,28 +1045,47 @@ export default function FretboardModule() {
       </section>
 
       <section className="panel practice-panel">
-        <div className="question-card" key={questionVersion}>
+        <div
+          className="question-card"
+          key={mode === 'chord' ? `chord-${chordVersion}` : questionVersion}
+        >
           <p className="eyebrow">
-            {question?.mode === 'scale' ? question.scaleName : '音位识别'}
+            {mode === 'chord'
+              ? '和弦练习'
+              : question?.mode === 'scale'
+                ? question.scaleName
+                : '音位识别'}
           </p>
           <h2>
-            {question
-              ? question.mode === 'note'
+            {mode === 'chord'
+              ? chordQuestion
                 ? (
                     <>
-                      <span className="target-note-name">
-                        {midiToFullName(question.targetMidi)}
-                      </span>
+                      <span className="target-note-name">{chordQuestion.name}</span>
                       <span className="target-position">
-                        在 {tuning.length - question.stringIndex} 弦 {question.fret} 品
+                        第 {chordQuestion.index + 1} / {chordQuestion.total} 个 ·{' '}
+                        {chordQuestion.progressionName}
                       </span>
                     </>
                   )
-                : `弹奏 ${midiToFullName(question.targetMidi)}`
-              : '准备中…'}
+                : '准备中…'
+              : question
+                ? question.mode === 'note'
+                  ? (
+                      <>
+                        <span className="target-note-name">
+                          {midiToFullName(question.targetMidi)}
+                        </span>
+                        <span className="target-position">
+                          在 {tuning.length - question.stringIndex} 弦 {question.fret} 品
+                        </span>
+                      </>
+                    )
+                  : `弹奏 ${midiToFullName(question.targetMidi)}`
+                : '准备中…'}
           </h2>
           <p className={`feedback ${feedbackTone}`}>{feedback}</p>
-          {question && (
+          {mode !== 'chord' && question && (
             <p className="muted">
               目标音：{midiToFullName(question.targetMidi)}
               {question.mode === 'note'
@@ -867,13 +1139,28 @@ export default function FretboardModule() {
           </div>
         )}
 
+        {mode === 'chord' && chordQuestion && (
+          <div className="chord-tones" aria-label="和弦音进度">
+            {chordQuestion.tones.map((pc) => {
+              const done = chordCollected.includes(pc)
+              return (
+                <span key={pc} className={done ? 'done' : ''}>
+                  <strong>{midiToNoteName(pc)}</strong>
+                  <small>{pc === chordQuestion.rootPc ? '根音' : '和弦音'}</small>
+                </span>
+              )
+            })}
+            {chordShapeText && <em className="chord-shape-hint">建议指法：{chordShapeText}</em>}
+          </div>
+        )}
+
         <div className="fretboard-scroll">
           <FretboardSvg
             tuning={tuning}
             maxFret={maxFret}
-            target={targetPositions[0] ?? null}
+            targets={fretTargets}
+            targetsVisible={fretTargetsVisible}
             detected={detectedPositions}
-            revealed={revealed}
           />
         </div>
 
@@ -898,18 +1185,24 @@ export default function FretboardModule() {
             <strong>{averageResponse ? `${(averageResponse / 1000).toFixed(1)}s` : '—'}</strong>
             <span>平均反应</span>
           </div>
-          {mode === 'scale' && (
+          {mode !== 'note' && (
             <div>
               <strong>{progress.completed ?? 0}</strong>
-              <span>完成轮次</span>
+              <span>{mode === 'chord' ? '完成和弦' : '完成轮次'}</span>
             </div>
           )}
           <button className="button" type="button" onClick={nextQuestion}>
-            {mode === 'scale' ? '跳到下一音' : '下一题'}
+            {mode === 'scale' ? '跳到下一音' : mode === 'chord' ? '下一个和弦' : '下一题'}
           </button>
-          <button className="button ghost" type="button" onClick={() => setRevealed(true)}>
-            显示答案
-          </button>
+          {mode === 'chord' ? (
+            <button className="button ghost" type="button" onClick={nextChord}>
+              跳过本和弦
+            </button>
+          ) : (
+            <button className="button ghost" type="button" onClick={() => setRevealed(true)}>
+              显示答案
+            </button>
+          )}
         </div>
       </section>
     </div>

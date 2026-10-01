@@ -26,8 +26,10 @@ import AudioToMidiPanel from './AudioToMidiPanel'
 import PdfScoreViewer from './PdfScoreViewer'
 
 const PAGE_BARS = 16
-const BARS_PER_ROW = 8
+const BARS_PER_ROW = 4
 const SCORE_HEIGHT_KEY = 'guitar-practice-score-height'
+const SAMPLE_FILE = withBase('samples/smoke-on-the-water.gp5')
+const SAMPLE_TITLE = 'Smoke On The Water'
 
 function initialScoreHeight(): number {
   if (typeof window === 'undefined') return 460
@@ -38,39 +40,11 @@ function initialScoreHeight(): number {
 
 function currentBarsPerRow(): number {
   if (typeof window === 'undefined') return BARS_PER_ROW
-  if (window.innerWidth <= 520) return 2
-  if (window.innerWidth <= 760) return 4
+  if (window.innerWidth <= 520) return 1
+  if (window.innerWidth <= 760) return 2
+  if (window.innerWidth <= 1100) return 3
   return BARS_PER_ROW
 }
-
-const SAMPLE_TEX = String.raw`
-\title "示例练习"
-\artist "Guitar Practice"
-\tempo 88
-.
-\ts 4 4
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.6 3.5 0.6 3.5 2.4 3.3 2.4 3.3 |
-:8 0.6 3.5 0.6 3.5 2.4 3.3 2.4 3.3 |
-:8 0.5 2.4 0.5 2.4 3.3 5.2 3.3 5.2 |
-:8 0.5 2.4 0.5 2.4 3.3 5.2 3.3 5.2 |
-:8 3.6 3.6 5.5 5.5 5.4 5.4 3.3 3.3 |
-:8 3.6 3.6 5.5 5.5 5.4 5.4 3.3 3.3 |
-:8 2.5 2.5 3.4 3.4 2.3 2.3 0.2 0.2 |
-:8 2.5 2.5 3.4 3.4 2.3 2.3 0.2 0.2 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.5 0.5 2.4 2.4 3.3 3.3 0.2 0.2 |
-:8 0.6 0.6 3.5 3.5 2.4 2.4 0.3 0.3 |
-`
 
 interface PendingImport {
   id: string
@@ -79,6 +53,7 @@ interface PendingImport {
   size: number
   existing?: SongRecord
   record?: SongRecord
+  sample?: boolean
 }
 
 interface RestoreState {
@@ -103,6 +78,8 @@ interface PracticeEvent {
   tick: number
   midis: number[]
   names: string[]
+  /** 闷音（谱面记作 x 的无音高音符）所在的拍子，不参与判定与评分。 */
+  muted: boolean
   notes: alphaTab.model.Note[]
   beat: alphaTab.model.Beat
 }
@@ -117,6 +94,31 @@ interface PracticeSummary {
 }
 
 const TIMING_WINDOW_TICKS = 480
+
+const BASS_TRACK_PATTERN = /bass|ベース|贝斯/i
+const GUITAR_TRACK_PATTERN = /guitar|gtr|ギター|吉他/i
+const VOCAL_TRACK_PATTERN = /vocal|voice|vox|sing|人声|唱/i
+
+/**
+ * 多音轨曲谱的默认选中轨：优先吉他/贝斯六线谱，尽量避开人声轨和打击乐轨。
+ */
+function pickDefaultTrackIndex(tracks: alphaTab.model.Track[]): number {
+  let bestIndex = 0
+  let bestScore = Number.NEGATIVE_INFINITY
+  tracks.forEach((track, index) => {
+    if (track.isPercussion) return
+    if (!track.staves.some((staff) => staff.showTablature)) return
+    let score = 1
+    if (BASS_TRACK_PATTERN.test(track.name)) score += 2
+    else if (GUITAR_TRACK_PATTERN.test(track.name)) score += 3
+    if (VOCAL_TRACK_PATTERN.test(track.name)) score -= 6
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = index
+    }
+  })
+  return bestIndex
+}
 
 function findMasterBarIndex(score: alphaTab.model.Score, tick: number): number {
   let result = 0
@@ -176,6 +178,7 @@ export default function ScoreModule() {
   const [micOn, setMicOn] = useState(false)
   const [detectedNote, setDetectedNote] = useState('')
   const [followTarget, setFollowTarget] = useState<PracticeEvent | null>(null)
+  const [followSkipped, setFollowSkipped] = useState(0)
   const [practiceSummary, setPracticeSummary] = useState<PracticeSummary | null>(null)
   const [audioToolOpen, setAudioToolOpen] = useState(false)
   const [pageTurn, setPageTurn] = useState<'idle' | 'next' | 'prev'>('idle')
@@ -335,6 +338,7 @@ export default function ScoreModule() {
         const events = practiceEventsRef.current
         for (let index = 0; index < events.length; index += 1) {
           if (
+            !events[index].muted &&
             events[index].tick + TIMING_WINDOW_TICKS < args.currentTick &&
             !accompanyMatchedRef.current.has(index) &&
             !accompanyMissedRef.current.has(index)
@@ -384,7 +388,7 @@ export default function ScoreModule() {
       setError(message)
     })
 
-    api.tex(SAMPLE_TEX)
+    void loadSampleScore()
 
     return () => {
       api.destroy()
@@ -545,18 +549,7 @@ export default function ScoreModule() {
     setActiveTrackIndex(index)
     activeTrackIndexRef.current = index
 
-    const sourceTrack =
-      track ??
-      availableTracks[
-        Math.max(
-          0,
-          availableTracks.findIndex(
-            (candidate) =>
-              !candidate.isPercussion &&
-              candidate.staves.some((staff) => staff.showTablature),
-          ),
-        )
-      ]
+    const sourceTrack = track ?? availableTracks[pickDefaultTrackIndex(availableTracks)]
     if (sourceTrack) syncPracticeEvents(sourceTrack)
   }
 
@@ -597,14 +590,20 @@ export default function ScoreModule() {
   function buildPracticeEvents(track: alphaTab.model.Track): PracticeEvent[] {
     const byTick = new Map<number, Map<number, alphaTab.model.Note>>()
     const beatByTick = new Map<number, alphaTab.model.Beat>()
+    const mutedTicks = new Set<number>()
     for (const staff of track.staves) {
       for (const bar of staff.bars) {
         for (const voice of bar.voices) {
           for (const beat of voice.beats) {
+            const tick = beat.absolutePlaybackStart
             for (const note of beat.notes) {
               if (note.isPercussion || note.isTieDestination) continue
-              const tick = beat.absolutePlaybackStart
               beatByTick.set(tick, beat)
+              // 闷音（x）没有可判定音高：只做标记，不进入跟练/陪练判定。
+              if (note.isDead) {
+                mutedTicks.add(tick)
+                continue
+              }
               const notes = byTick.get(tick) ?? new Map<number, alphaTab.model.Note>()
               notes.set(Math.round(note.realValue), note)
               byTick.set(tick, notes)
@@ -613,18 +612,43 @@ export default function ScoreModule() {
         }
       }
     }
-    return [...byTick.entries()]
-      .map(([tick, noteMap]) => {
-        const sorted = [...noteMap.keys()].sort((a, b) => a - b)
+    return [...new Set<number>([...byTick.keys(), ...mutedTicks])]
+      .sort((a, b) => a - b)
+      .map((tick) => {
+        const noteMap = byTick.get(tick)
+        const sorted = noteMap ? [...noteMap.keys()].sort((a, b) => a - b) : []
         return {
           tick,
           midis: sorted,
           names: [...new Set(sorted.map((midi) => midiToFullName(midi)))],
-          notes: sorted.map((midi) => noteMap.get(midi)!),
+          muted: sorted.length === 0,
+          notes: sorted.map((midi) => noteMap!.get(midi)!),
           beat: beatByTick.get(tick)!,
         }
       })
       .sort((a, b) => a.tick - b.tick)
+  }
+
+  function playableEvents(): PracticeEvent[] {
+    return practiceEventsRef.current.filter((event) => !event.muted)
+  }
+
+  /** 从指定下标开始，跳过闷音拍，返回下一个需要弹奏的事件下标。 */
+  function nextPlayableIndex(from: number): number {
+    const events = practiceEventsRef.current
+    let index = Math.max(0, from)
+    while (index < events.length && events[index].muted) index += 1
+    return index
+  }
+
+  function syncFollowTarget(index: number): number {
+    const events = practiceEventsRef.current
+    const next = nextPlayableIndex(index)
+    followIndexRef.current = next
+    setFollowTarget(events[next] ?? null)
+    setFollowSkipped(Math.max(0, next - index))
+    highlightPracticeEvent(events[next] ?? null)
+    return next
   }
 
   function resetPracticeScore() {
@@ -639,13 +663,15 @@ export default function ScoreModule() {
   function syncPracticeEvents(track: alphaTab.model.Track) {
     const events = buildPracticeEvents(track)
     practiceEventsRef.current = events
-    followIndexRef.current = 0
-    setFollowTarget(events[0] ?? null)
+    const first = nextPlayableIndex(0)
+    followIndexRef.current = first
+    setFollowTarget(events[first] ?? null)
+    setFollowSkipped(first)
     resetPracticeScore()
   }
 
   function practiceSummaryFromState(): PracticeSummary {
-    const total = practiceEventsRef.current.length
+    const total = playableEvents().length
     const hits = accompanyMatchedRef.current.size
     const misses = accompanyMissedRef.current.size
     const evaluated = Math.max(1, hits + misses)
@@ -713,33 +739,32 @@ export default function ScoreModule() {
       const target = events[followIndexRef.current]
       if (
         !target ||
+        target.muted ||
         !target.midis.some((midi) => pitchClass(midi) === pitchClass(result.midi!))
       ) {
         return
       }
-      const nextIndex = followIndexRef.current + 1
-      followIndexRef.current = nextIndex
-      const next = events[nextIndex] ?? null
-      setFollowTarget(next)
-      highlightPracticeEvent(next)
-      if (next) {
+      const playable = playableEvents()
+      const total = playable.length
+      const hits = playable.findIndex((event) => event === target) + 1
+      const next = syncFollowTarget(followIndexRef.current + 1)
+      if (next < events.length) {
         setLiveScore({
           pitch: 100,
           rhythm: 100,
-          overall: Math.round((nextIndex / events.length) * 100),
-          hits: nextIndex,
-          total: events.length,
+          overall: total > 0 ? Math.round((hits / total) * 100) : 100,
+          hits,
+          total,
           averageMs: 0,
         })
       } else {
-        const api = apiRef.current
-        api?.clearPlaybackRangeHighlight()
+        apiRef.current?.clearPlaybackRangeHighlight()
         setLiveScore({
           pitch: 100,
           rhythm: 100,
           overall: 100,
-          hits: events.length,
-          total: events.length,
+          hits: total,
+          total,
           averageMs: 0,
         })
       }
@@ -753,7 +778,11 @@ export default function ScoreModule() {
       let bestIndex = -1
       let bestDistance = Number.POSITIVE_INFINITY
       for (let index = 0; index < events.length; index += 1) {
-        if (accompanyMatchedRef.current.has(index) || accompanyMissedRef.current.has(index)) {
+        if (
+          events[index].muted ||
+          accompanyMatchedRef.current.has(index) ||
+          accompanyMissedRef.current.has(index)
+        ) {
           continue
         }
         const distance = Math.abs(events[index].tick - currentTick)
@@ -885,10 +914,7 @@ export default function ScoreModule() {
     api.stop()
     api.clearPlaybackRangeHighlight()
     if (mode === 'follow') {
-      const first = practiceEventsRef.current[0]
-      followIndexRef.current = 0
-      setFollowTarget(first ?? null)
-      highlightPracticeEvent(first)
+      syncFollowTarget(0)
     } else {
       api.tickPosition = 0
     }
@@ -916,14 +942,7 @@ export default function ScoreModule() {
       const selectedIndex =
         restore && restore.selectedTrackIndexes.length > 0
           ? restore.selectedTrackIndexes[0]
-          : Math.max(
-              0,
-              api.score.tracks.findIndex(
-                (track) =>
-                  !track.isPercussion &&
-                  track.staves.some((staff) => staff.showTablature),
-              ),
-            )
+          : pickDefaultTrackIndex(api.score.tracks)
       renderSelection(selectedIndex, displayMode)
       initialTrackAppliedRef.current = true
     }
@@ -1135,12 +1154,14 @@ export default function ScoreModule() {
       setActivePdf(null)
       restoreRef.current = null
       originalTracksRef.current = null
-      apiRef.current?.tex(SAMPLE_TEX)
+      void loadSampleScore()
     }
     await refreshSongs()
   }
 
-  function showSample() {
+  async function loadSampleScore() {
+    const api = apiRef.current
+    if (!api) return
     restoreRef.current = null
     activeSongIdRef.current = null
     setActiveSongId(null)
@@ -1148,7 +1169,24 @@ export default function ScoreModule() {
     originalTracksRef.current = null
     pageRef.current = 0
     setPageIndex(0)
-    apiRef.current?.tex(SAMPLE_TEX)
+    setError('')
+    try {
+      const response = await fetch(SAMPLE_FILE)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const buffer = await response.arrayBuffer()
+      pendingImportRef.current = {
+        id: 'sample-smoke-on-the-water',
+        fileName: 'Smoke On The Water.gp5',
+        format: 'gp5',
+        size: buffer.byteLength,
+        sample: true,
+      }
+      api.load(buffer)
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? `示例曲谱加载失败：${caught.message}` : '示例曲谱加载失败',
+      )
+    }
   }
 
   function toggleTrackMute(index: number) {
@@ -1235,8 +1273,13 @@ export default function ScoreModule() {
               >
                 导入 GP / PDF
               </button>
-              <button className="button compact" type="button" onClick={showSample}>
-                示例
+              <button
+                className="button compact"
+                type="button"
+                title="载入内置示例曲谱 Smoke On The Water"
+                onClick={() => void loadSampleScore()}
+              >
+                示例曲谱
               </button>
               <button
                 className="button compact"
@@ -1309,7 +1352,7 @@ export default function ScoreModule() {
         <div className="player-header compact-header">
           <div>
             <p className="eyebrow">Practice</p>
-            <h2>{activePdf?.title || score?.title || activeSong?.title || '示例练习'}</h2>
+            <h2>{activePdf?.title || score?.title || activeSong?.title || SAMPLE_TITLE}</h2>
             <p className="muted">
               {activePdf
                 ? `PDF 曲谱 · 当前第 ${activePdf.lastPage} 页`
@@ -1348,6 +1391,9 @@ export default function ScoreModule() {
             {!activePdf && practiceMode === 'follow' && followTarget && (
               <span className="active-notes">
                 请弹奏：{followTarget.names.join(' ')}
+                {followSkipped > 0 && (
+                  <em className="follow-skip-hint">（已跳过 {followSkipped} 个闷音）</em>
+                )}
               </span>
             )}
           </div>
