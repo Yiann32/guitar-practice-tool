@@ -166,11 +166,20 @@ export interface ChordType {
 export const CHORD_TYPES: ChordType[] = [
   { id: 'major', name: '大三和弦', suffix: '', intervals: [0, 4, 7] },
   { id: 'minor', name: '小三和弦', suffix: 'm', intervals: [0, 3, 7] },
+  { id: 'power', name: '强力和弦', suffix: '5', intervals: [0, 7, 12] },
+  { id: 'sus2', name: '挂二和弦 sus2', suffix: 'sus2', intervals: [0, 2, 7] },
+  { id: 'sus4', name: '挂四和弦 sus4', suffix: 'sus4', intervals: [0, 5, 7] },
+  { id: 'six', name: '六和弦', suffix: '6', intervals: [0, 4, 7, 9] },
+  { id: 'min6', name: '小六和弦', suffix: 'm6', intervals: [0, 3, 7, 9] },
+  { id: 'add9', name: '加九和弦 add9', suffix: 'add9', intervals: [0, 4, 7, 14] },
   { id: 'dom7', name: '属七和弦', suffix: '7', intervals: [0, 4, 7, 10] },
   { id: 'maj7', name: '大七和弦', suffix: 'maj7', intervals: [0, 4, 7, 11] },
   { id: 'min7', name: '小七和弦', suffix: 'm7', intervals: [0, 3, 7, 10] },
-  { id: 'sus4', name: '挂四和弦', suffix: 'sus4', intervals: [0, 5, 7] },
-  { id: 'power', name: '强力和弦', suffix: '5', intervals: [0, 7, 12] },
+  { id: 'dom9', name: '属九和弦 9', suffix: '9', intervals: [0, 4, 7, 10, 14] },
+  { id: 'sevenSus4', name: '七挂四 7sus4', suffix: '7sus4', intervals: [0, 5, 7, 10] },
+  { id: 'halfDim', name: '半减七 m7♭5', suffix: 'm7♭5', intervals: [0, 3, 6, 10] },
+  { id: 'dim7', name: '减七 dim7', suffix: 'dim7', intervals: [0, 3, 6, 9] },
+  { id: 'aug', name: '增三和弦 aug', suffix: 'aug', intervals: [0, 4, 8] },
 ]
 
 export interface ChordShapeNote {

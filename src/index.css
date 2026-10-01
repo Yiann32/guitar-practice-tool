@@ -922,6 +922,31 @@ input[type="checkbox"] {
   color: var(--accent-strong) !important;
 }
 
+/* alphaTab 的光标与选区元素由 JS 动态插入，NPM 包不再附带样式表，
+   缺少这些规则时播放光标和跟练高亮都是不可见的。 */
+.alphaTab-target .at-cursors {
+  position: absolute;
+  z-index: 1000;
+  display: inline;
+  pointer-events: none;
+}
+
+.alphaTab-target .at-cursor-bar {
+  background: rgba(123, 131, 196, 0.16);
+}
+
+.alphaTab-target .at-cursor-beat {
+  width: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(123, 131, 196, 0.55);
+}
+
+.alphaTab-target .at-selection div {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(123, 131, 196, 0.24);
+}
+
 .compact-row {
   margin-top: 10px;
 }
@@ -1217,6 +1242,20 @@ input[type="checkbox"] {
 .stat-row .button {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+select:disabled {
+  color: var(--muted);
+  background: var(--panel-strong);
+  cursor: not-allowed;
 }
 
 .pdf-practice {

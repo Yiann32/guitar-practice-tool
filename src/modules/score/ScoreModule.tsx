@@ -545,6 +545,9 @@ export default function ScoreModule() {
     window.setTimeout(() => {
       applyMixState()
       applyPage(pageRef.current, false)
+      if (practiceModeRef.current === 'follow') {
+        highlightPracticeEvent(practiceEventsRef.current[followIndexRef.current] ?? null)
+      }
     }, 240)
     setActiveTrackIndex(index)
     activeTrackIndexRef.current = index
@@ -641,13 +644,35 @@ export default function ScoreModule() {
     return index
   }
 
-  function syncFollowTarget(index: number): number {
+  function syncFollowTarget(index: number, withPageTurn = true): number {
     const events = practiceEventsRef.current
     const next = nextPlayableIndex(index)
     followIndexRef.current = next
-    setFollowTarget(events[next] ?? null)
+    const target = events[next] ?? null
+    setFollowTarget(target)
     setFollowSkipped(Math.max(0, next - index))
-    highlightPracticeEvent(events[next] ?? null)
+    const playable = playableEvents()
+    const completed = target ? playable.indexOf(target) : playable.length
+    setLiveScore({
+      pitch: 100,
+      rhythm: 100,
+      overall: playable.length > 0 ? Math.round((completed / playable.length) * 100) : 0,
+      hits: completed,
+      total: playable.length,
+      averageMs: 0,
+    })
+    highlightPracticeEvent(target)
+    if (target && withPageTurn) {
+      // 跟练不播放音频，playerPositionChanged 不会触发翻页，这里手动跟随目标音符翻页。
+      const loadedScore = apiRef.current?.score
+      if (loadedScore) {
+        const barIndex = findMasterBarIndex(loadedScore, target.tick)
+        const targetPage = Math.floor(barIndex / PAGE_BARS)
+        if (targetPage !== pageRef.current && targetPage < pageCountRef.current) {
+          applyPage(targetPage, true)
+        }
+      }
+    }
     return next
   }
 
@@ -663,11 +688,15 @@ export default function ScoreModule() {
   function syncPracticeEvents(track: alphaTab.model.Track) {
     const events = buildPracticeEvents(track)
     practiceEventsRef.current = events
+    resetPracticeScore()
+    if (practiceModeRef.current === 'follow') {
+      syncFollowTarget(0, false)
+      return
+    }
     const first = nextPlayableIndex(0)
     followIndexRef.current = first
     setFollowTarget(events[first] ?? null)
     setFollowSkipped(first)
-    resetPracticeScore()
   }
 
   function practiceSummaryFromState(): PracticeSummary {
@@ -705,9 +734,19 @@ export default function ScoreModule() {
       api.clearPlaybackRangeHighlight()
       return
     }
-    api.highlightPlaybackRange(event.beat, event.beat)
+    // alphaTab 的 highlightPlaybackRange 在 start === end 时只会清空高亮、
+    // 不会绘制任何东西，所以这里用相邻的一拍构造范围，保证目标音符真的被框住。
+    const beats = event.beat.voice.beats
+    const next = beats[event.beat.index + 1]
+    const previous = beats[event.beat.index - 1]
+    const applyRange = () => {
+      if (next) api.highlightPlaybackRange(event.beat, next)
+      else if (previous) api.highlightPlaybackRange(previous, event.beat)
+      else api.clearPlaybackRangeHighlight()
+    }
+    applyRange()
     api.tickPosition = event.tick
-    window.setTimeout(() => api.highlightPlaybackRange(event.beat, event.beat), 30)
+    window.setTimeout(applyRange, 30)
   }
 
   function handleScorePitch(result: PitchResult) {
@@ -744,29 +783,9 @@ export default function ScoreModule() {
       ) {
         return
       }
-      const playable = playableEvents()
-      const total = playable.length
-      const hits = playable.findIndex((event) => event === target) + 1
       const next = syncFollowTarget(followIndexRef.current + 1)
-      if (next < events.length) {
-        setLiveScore({
-          pitch: 100,
-          rhythm: 100,
-          overall: total > 0 ? Math.round((hits / total) * 100) : 100,
-          hits,
-          total,
-          averageMs: 0,
-        })
-      } else {
+      if (next >= events.length) {
         apiRef.current?.clearPlaybackRangeHighlight()
-        setLiveScore({
-          pitch: 100,
-          rhythm: 100,
-          overall: 100,
-          hits: total,
-          total,
-          averageMs: 0,
-        })
       }
       return
     }
@@ -1443,11 +1462,19 @@ export default function ScoreModule() {
                       识别：{detectedNote}
                     </span>
                   )}
-                  <div className="live-score">
-                    <span>音准 {liveScore.pitch}%</span>
-                    <span>节奏 {liveScore.rhythm}%</span>
-                    <strong>综合 {liveScore.overall}%</strong>
-                  </div>
+                  {practiceMode === 'follow' ? (
+                    <div className="live-score">
+                      <strong>
+                        进度 {liveScore.hits} / {liveScore.total || '—'}
+                      </strong>
+                    </div>
+                  ) : (
+                    <div className="live-score">
+                      <span>音准 {liveScore.pitch}%</span>
+                      <span>节奏 {liveScore.rhythm}%</span>
+                      <strong>综合 {liveScore.overall}%</strong>
+                    </div>
+                  )}
                 </>
               )}
             </div>

@@ -53,16 +53,91 @@ interface ChordQuestion {
 interface ChordProgression {
   id: string
   name: string
-  /** 相对根音的半音偏移，用于生成和弦进行。 */
-  offsets: number[]
+  /** 相对根音的半音偏移；typeId 留空则沿用「和弦类型」里选择的类型。 */
+  steps: Array<{ offset: number; typeId?: string }>
+  hint?: string
 }
 
 const CHORD_PROGRESSIONS: ChordProgression[] = [
-  { id: 'single', name: '单和弦循环', offsets: [0] },
-  { id: 'pop', name: '流行 I–V–vi–IV', offsets: [0, 7, 9, 5] },
-  { id: 'fifties', name: '50 年代 I–vi–IV–V', offsets: [0, 9, 5, 7] },
-  { id: 'blues', name: '布鲁斯 I–IV–V', offsets: [0, 5, 7] },
-  { id: 'canon', name: '卡农进行', offsets: [0, 7, 9, 4, 5, 0, 5, 7] },
+  { id: 'single', name: '单和弦循环', steps: [{ offset: 0 }] },
+  { id: 'pop', name: '流行 I–V–vi–IV', steps: [{ offset: 0 }, { offset: 7 }, { offset: 9 }, { offset: 5 }] },
+  {
+    id: 'fifties',
+    name: '50 年代 I–vi–IV–V',
+    steps: [{ offset: 0 }, { offset: 9 }, { offset: 5 }, { offset: 7 }],
+  },
+  { id: 'blues', name: '布鲁斯 I–IV–V', steps: [{ offset: 0 }, { offset: 5 }, { offset: 7 }] },
+  {
+    id: 'canon',
+    name: '卡农进行 I–V–vi–iii–IV–I–IV–V',
+    steps: [
+      { offset: 0 },
+      { offset: 7 },
+      { offset: 9 },
+      { offset: 4 },
+      { offset: 5 },
+      { offset: 0 },
+      { offset: 5 },
+      { offset: 7 },
+    ],
+  },
+  {
+    id: 'oudou',
+    name: '王道進行 4-5-3-6',
+    steps: [
+      { offset: 5, typeId: 'maj7' },
+      { offset: 7, typeId: 'dom7' },
+      { offset: 4, typeId: 'min7' },
+      { offset: 9, typeId: 'min7' },
+    ],
+    hint: 'IV△7–V7–iii7–vi，日系流行最常用的进行',
+  },
+  {
+    id: 'marunouchi',
+    name: '丸の内進行 4-5-3-6（三和音）',
+    steps: [{ offset: 5 }, { offset: 7 }, { offset: 4 }, { offset: 9 }],
+    hint: '与王道進行的度数相同，改用三和弦、色彩更干净',
+  },
+  {
+    id: 'oudou251',
+    name: '王道進行扩展 4-5-3-6-2-5-1',
+    steps: [
+      { offset: 5, typeId: 'maj7' },
+      { offset: 7, typeId: 'dom7' },
+      { offset: 4, typeId: 'min7' },
+      { offset: 9, typeId: 'min7' },
+      { offset: 2, typeId: 'min7' },
+      { offset: 7, typeId: 'dom7' },
+      { offset: 0, typeId: 'maj7' },
+    ],
+    hint: '在王道進行后面接 ii–V–I 收尾',
+  },
+  {
+    id: 'komuro',
+    name: '小室進行 6-4-5-1',
+    steps: [
+      { offset: 9, typeId: 'min7' },
+      { offset: 5, typeId: 'maj7' },
+      { offset: 7, typeId: 'dom7' },
+      { offset: 0, typeId: 'maj7' },
+    ],
+    hint: 'vi–IV–V–I，90 年代 J-Pop 的标志性进行',
+  },
+  {
+    id: 'jpop-canon',
+    name: '日系卡农 1-5-6-3-4-1-4-5',
+    steps: [
+      { offset: 0, typeId: 'maj7' },
+      { offset: 7, typeId: 'dom7' },
+      { offset: 9, typeId: 'min7' },
+      { offset: 4, typeId: 'min7' },
+      { offset: 5, typeId: 'maj7' },
+      { offset: 0, typeId: 'maj7' },
+      { offset: 5, typeId: 'maj7' },
+      { offset: 7, typeId: 'dom7' },
+    ],
+    hint: 'I△7–V7–vi7–iii7–IV△7–I△7–IV△7–V7',
+  },
 ]
 
 const SCALES: ScaleDefinition[] = [
@@ -459,11 +534,12 @@ export default function FretboardModule() {
   nextQuestionRef.current = nextQuestion
 
   function buildChordQuestion(index: number): ChordQuestion | null {
-    const type = CHORD_TYPES.find((item) => item.id === chordTypeId) ?? CHORD_TYPES[0]
     const progression =
       CHORD_PROGRESSIONS.find((item) => item.id === progressionId) ?? CHORD_PROGRESSIONS[0]
-    const offset = progression.offsets[index % progression.offsets.length]
-    const rootPc = pitchClass(chordRoot + offset)
+    const step = progression.steps[index % progression.steps.length]
+    const type =
+      CHORD_TYPES.find((item) => item.id === (step.typeId ?? chordTypeId)) ?? CHORD_TYPES[0]
+    const rootPc = pitchClass(chordRoot + step.offset)
     const shape = buildChordShape(tuning, rootPc, type.intervals, maxFret)
     if (shape.length === 0) return null
     const shapeTones = [...new Set(shape.map((note) => note.pitchClass))]
@@ -474,7 +550,7 @@ export default function FretboardModule() {
       shape,
       progressionName: progression.name,
       index,
-      total: progression.offsets.length,
+      total: progression.steps.length,
     }
   }
 
@@ -501,7 +577,7 @@ export default function FretboardModule() {
   function nextChord() {
     const progression =
       CHORD_PROGRESSIONS.find((item) => item.id === progressionId) ?? CHORD_PROGRESSIONS[0]
-    const nextIndex = (chordIndexRef.current + 1) % progression.offsets.length
+    const nextIndex = (chordIndexRef.current + 1) % progression.steps.length
     startChordPractice(nextIndex)
   }
 
@@ -812,6 +888,9 @@ export default function FretboardModule() {
           .map((note) => `${tuning.length - note.stringIndex} 弦 ${note.fret} 品`)
           .join(' · ')
       : ''
+  const activeProgression =
+    CHORD_PROGRESSIONS.find((item) => item.id === progressionId) ?? CHORD_PROGRESSIONS[0]
+  const progressionUsesOwnTypes = activeProgression.steps.some((step) => step.typeId)
 
   return (
     <div className="module fretboard-module">
@@ -989,9 +1068,11 @@ export default function FretboardModule() {
               <label>
                 <span>和弦类型</span>
                 <select
-                  value={chordTypeId}
+                  value={progressionUsesOwnTypes ? 'auto' : chordTypeId}
+                  disabled={progressionUsesOwnTypes}
                   onChange={(event) => setChordTypeId(event.target.value)}
                 >
+                  {progressionUsesOwnTypes && <option value="auto">按进行自动（7th 等）</option>}
                   {CHORD_TYPES.map((type) => (
                     <option key={type.id} value={type.id}>
                       {type.name}
@@ -1011,6 +1092,9 @@ export default function FretboardModule() {
                     </option>
                   ))}
                 </select>
+                {activeProgression.hint && (
+                  <small className="field-hint">{activeProgression.hint}</small>
+                )}
               </label>
             </>
           )}
