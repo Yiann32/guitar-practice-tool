@@ -917,34 +917,59 @@ input[type="checkbox"] {
 .alphaTab-target .at-highlight ellipse,
 .alphaTab-target .at-highlight circle,
 .alphaTab-target .at-highlight text {
-  fill: var(--accent) !important;
+  fill: var(--accent-strong) !important;
   stroke: var(--accent-strong) !important;
   color: var(--accent-strong) !important;
 }
 
 /* alphaTab 的光标与选区元素由 JS 动态插入，NPM 包不再附带样式表，
-   缺少这些规则时播放光标和跟练高亮都是不可见的。 */
+   缺少这些规则时播放光标和跟练高亮都是不可见的。
+   另外 alphaTab 默认把光标层压在最上面（z-index: 1000）会盖住音符，
+   这里把光标层放到谱面下方，只当“荧光笔”给目标区域染色。 */
 .alphaTab-target .at-cursors {
   position: absolute;
-  z-index: 1000;
+  /* alphaTab 用行内样式写死了 z-index: 1000（压在谱面之上），必须覆盖。 */
+  z-index: 0 !important;
   display: inline;
   pointer-events: none;
 }
 
+.alphaTab-target .at-surface {
+  position: relative;
+  z-index: 1;
+}
+
 .alphaTab-target .at-cursor-bar {
-  background: rgba(123, 131, 196, 0.16);
+  background: rgba(123, 131, 196, 0.08);
 }
 
 .alphaTab-target .at-cursor-beat {
-  width: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(123, 131, 196, 0.55);
+  width: 2px;
+  background: rgba(123, 131, 196, 0.6);
 }
 
 .alphaTab-target .at-selection div {
   position: absolute;
   border-radius: 3px;
-  background: rgba(123, 131, 196, 0.24);
+  background: rgba(123, 131, 196, 0.14);
+}
+
+/* 跟练模式：播放光标那根竖线正好压在目标音符上，会挡住音符。
+   改成一条位于谱面下方的柔和色带，既精确指示该弹哪个音，
+   又不会覆盖任何音符或符号。跟练用红色，和演奏模式的紫色区分开。 */
+.score-module.follow-mode .alphaTab-target .at-cursor-beat {
+  /* alphaTab 用行内样式写死了 3px 宽，这里必须用 !important 才能加宽成色带。 */
+  width: 16px !important;
+  border-radius: 5px;
+  background: rgba(207, 85, 96, 0.45);
+}
+
+.score-module.follow-mode .alphaTab-target .at-cursor-bar {
+  background: rgba(207, 85, 96, 0.06);
+}
+
+.score-module.follow-mode .alphaTab-target .at-selection div {
+  background: rgba(207, 85, 96, 0.18);
 }
 
 .compact-row {

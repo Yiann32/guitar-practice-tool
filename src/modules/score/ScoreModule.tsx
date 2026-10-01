@@ -1257,7 +1257,11 @@ export default function ScoreModule() {
   const pageEndBar = Math.min((pageIndex + 1) * PAGE_BARS, score?.masterBars.length ?? PAGE_BARS)
 
   return (
-    <div className={`module score-module ${libraryCollapsed ? 'library-collapsed' : ''}`}>
+    <div
+      className={`module score-module ${libraryCollapsed ? 'library-collapsed' : ''} ${
+        practiceMode === 'follow' ? 'follow-mode' : ''
+      }`}
+    >
       <section className="panel score-library-panel">
         {libraryCollapsed ? (
           <button
